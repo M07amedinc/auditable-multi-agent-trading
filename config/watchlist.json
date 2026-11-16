@@ -1,0 +1,23 @@
+{
+  "comment": "CoinGecko coin ids. Find ids via: https://api.coingecko.com/api/v3/coins/list (or /search endpoint)",
+  "coins": [
+    "solana", "jupiter-exchange-solana", "raydium", "orca",
+    "bonk", "dogwifcoin", "popcat", "cat-in-a-dogs-world",
+    "jito", "pyth-network", "wormhole", "drift-protocol",
+    "helium", "render-token", "akash-network", "stepn",
+    "phantgo", "moonlight", "book-of-meme", "tremp"
+  ],
+  "vs_currency": "usd",
+  "days_history": 730,
+  "portfolio": {
+    "starting_capital_usd": 10000,
+    "max_position_pct": 5,
+    "hunter_max_position_pct": 2,
+    "max_drawdown_pct": 15,
+    "max_trades_per_day": 5
+  }
+,
+  "mints": {
+    "solana": "So11111111111111111111111111111111111111112"
+  }
+}
