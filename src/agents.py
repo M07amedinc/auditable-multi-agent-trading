@@ -23,23 +23,14 @@ def _ask(prompt: str, role: int = 0) -> str:
         print(f"[agents] LLM call FAILED: {e}", file=sys.stderr)
         raise
 
-def _parse_json(text: str):
-    """Extract JSON from an LLM reply - handles objects {...} AND arrays [...],
-    with or without markdown fences."""
-    import re as _re
-    s = text.strip()
-    if s.startswith("```"):
-        s = _re.sub(r"^```(json|JSON)?", "", s).strip().rstrip("`").strip()
-    if s.startswith("["):                      # JSON array (verifier replies)
-        end = s.rfind("]")
-        if end == -1:
-            raise ValueError("no JSON array in reply: " + s[:120])
-        return json.loads(s[:end+1])
-    start = s.find("{")
-    end = s.rfind("}")
+def _parse_json(text: str) -> dict:
+    start = text.find("{")
+    if start == -1:
+        start = text.find("[")
+    end = max(text.rfind("}"), text.rfind("]"))
     if start == -1 or end == -1 or end < start:
-        raise ValueError("no JSON in reply: " + s[:120])
-    return json.loads(s[start:end+1])
+        raise ValueError("no JSON in reply: " + text[:120])
+    return json.loads(text[start:end+1])
 
 def _data_block(df) -> str:
     """Rich, checkable data summary - the verifier can verify arithmetic."""
@@ -106,7 +97,11 @@ def verifier_agent(bull: Argument, bear: Argument, df, use_llm: bool = True) -> 
     except Exception:
         return [Verdict(c, "unverifiable") for c in claims]
 
-def decide(bull: Argument, bear: Argument, verdicts: list) -> str:
+def decide(bull: Argument, bear: Argument, verdicts: list,
+           threshold: float = 1.2, min_score: float = 0.5) -> str:
+    """threshold: how much the winner must dominate (1.2 = 20% stronger).
+    min_score: minimum confidence-weighted score to trade at all.
+    Lower both = braver buying (use with --aggressive)."""
     vmap = {v.claim: v.status for v in verdicts}
     W = {"verified": 1.0, "false": -1.0, "unverifiable": 0.3}
     def score(a):
@@ -114,6 +109,6 @@ def decide(bull: Argument, bear: Argument, verdicts: list) -> str:
             return 0.0
         return a.confidence * sum(W.get(vmap.get(c, "unverifiable"), 0.3) for c in a.claims)
     bs, rs = score(bull), score(bear)
-    if bs > 1.2 * max(rs, 1e-9) and bs > 0.5: return "BUY"
-    if rs > 1.2 * max(bs, 1e-9) and rs > 0.5: return "SELL"
+    if bs > threshold * max(rs, 1e-9) and bs > min_score: return "BUY"
+    if rs > threshold * max(bs, 1e-9) and rs > min_score: return "SELL"
     return "HOLD"

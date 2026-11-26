@@ -28,8 +28,24 @@ from src.filter import is_special_happening
 from src.fetch_data import fetch_binance
 from src.jupiter import get_quote, honeypot_probe
 
-PAPER = "--live" not in sys.argv            # safety: default is ALWAYS paper
-LOOP_MIN = int(os.getenv("LOOP_MINUTES", "60"))
+import argparse
+_ap = argparse.ArgumentParser()
+_ap.add_argument("--live", action="store_true", help="execute real swaps on devnet (default: paper)")
+_ap.add_argument("--minutes", type=int, default=int(os.getenv("LOOP_MINUTES", "60")),
+                 help="loop interval in minutes (default 60; use 5 for gem hunting)")
+_ap.add_argument("--aggressive", action="store_true",
+                 help="braver buying: looser decision threshold + bigger positions")
+_ap.add_argument("--gems", action="store_true",
+                 help="looser hunter thresholds to catch new trend tokens early")
+_ARGS = _ap.parse_args()
+PAPER = not _ARGS.live            # safety: default is ALWAYS paper
+LOOP_MIN = _ARGS.minutes
+AGGRESSIVE = _ARGS.aggressive
+GEM_MODE = _ARGS.gems
+# decision tuning: AGGRESSIVE = braver (more buys, more small losses possible)
+DECIDE_THRESHOLD = 1.05 if AGGRESSIVE else 1.2
+DECIDE_MIN_SCORE = 0.25 if AGGRESSIVE else 0.5
+POSITION_PCT = 5.0 if AGGRESSIVE else 3.0
 CFG = json.load(open("config/watchlist.json"))
 PORT = CFG["portfolio"]
 STATE = {"cash": PORT["starting_capital_usd"], "holdings": {}, "trades_today": 0,
@@ -132,10 +148,16 @@ def record(decision, why, outcome_tag="no_trade", pnl=0.0, coin="-"):
         f.write(json.dumps(rec) + "\n")
     return rec
 
+_LAST_CANDLE = {}   # coin_id -> timestamp of newest candle already analyzed
+
 def process_coin(coin_id: str):
     df = candles(coin_id)
     if df is None or len(df) < 31:
         return
+    newest = str(df.iloc[-1]["timestamp"])
+    if _LAST_CANDLE.get(coin_id) == newest:
+        return                      # no new candle yet - skip (no wasted LLM calls)
+    _LAST_CANDLE[coin_id] = newest
     snap = df.iloc[:-5] if len(df) > 34 else df       # agents see only closed candles
     if not is_special_happening(snap):
         return
@@ -144,7 +166,7 @@ def process_coin(coin_id: str):
     bull = bull_agent(snap, lessons, use_llm=True)
     bear = bear_agent(snap, lessons, use_llm=True)
     verdicts = verifier_agent(bull, bear, snap, use_llm=True)
-    decision = decide(bull, bear, verdicts)
+    decision = decide(bull, bear, verdicts, threshold=DECIDE_THRESHOLD, min_score=DECIDE_MIN_SCORE)
     why = {"bull_claims": bull.claims, "bear_claims": bear.claims,
            "verifier": {v.claim: v.status for v in verdicts},
            "gates": gate_reasons, "mandate": "pending"}
@@ -152,7 +174,7 @@ def process_coin(coin_id: str):
         record("BLOCKED", why, "gate_reject", coin=coin_id); return
     if decision == "HOLD":
         record("HOLD", why, "no_trade", coin=coin_id); return
-    md = MANDATE.check({"symbol": coin_id, "size_pct": 3.0, "mode": "trader"}, STATE)
+    md = MANDATE.check({"symbol": coin_id, "size_pct": POSITION_PCT, "mode": "trader"}, STATE)
     why["mandate"] = "allowed" if md.allowed else f"blocked: {md.reasons}"
     if not md.allowed:
         record("BLOCKED", why, "mandate_block", coin=coin_id); return
@@ -183,10 +205,17 @@ def process_coin(coin_id: str):
         record(decision, why, f"live_failed: {info}", coin=coin_id)
         print(f"[live-devnet] {coin_id}: failed -> {info}")
 
+_SEEN_MINTS = set()
+
 def process_hunter():
-    for c in scan_candidates():
-        mint, sym = c["address"], c.get("symbol", "?")
-        print(f"[hunter] candidate {sym} ({mint[:8]}...) vol24h={c['vol24h']:.0f}")
+    cands = scan_gems() if GEM_MODE else scan_candidates()
+    for c in cands:
+        mint = c["address"]
+        if mint in _SEEN_MINTS:
+            continue                      # already screened this session
+        _SEEN_MINTS.add(mint)
+        sym = c.get("symbol") or mint[:8]
+        print(f"[hunter] candidate {sym} vol24h={c['vol24h']:.0f} chg24h={c.get('chg24h', 0):.1f}%")
         ok, reasons = gates(sym, mint=mint)
         rec = {"coin": sym, "mint": mint, "signals": c.get("signals_fired"), "gates": reasons}
         with open("logs/hunter_candidates.jsonl", "a") as f:
@@ -195,7 +224,7 @@ def process_hunter():
             print(f"[hunter] {sym} REJECTED by gates: {reasons}")
 
 def main():
-    print(f"LIVE LOOP starting | paper={PAPER} | every {LOOP_MIN} min")
+    print(f"LIVE LOOP starting | paper={PAPER} | every {LOOP_MIN} min | aggressive={AGGRESSIVE} | gems={GEM_MODE}")
     print("Ctrl+C to stop. Logs: logs/decisions.jsonl, logs/audit.jsonl")
     while True:
         try:
