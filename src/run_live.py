@@ -19,7 +19,7 @@ Safety notes:
 """
 import json, os, sys, time, traceback
 import pandas as pd
-from src.hunter import scan_candidates
+from src.hunter import scan_candidates, scan_gems
 from src.agents import bull_agent, bear_agent, verifier_agent, decide
 from src.mandate import MandateLayer
 from src.auditor import Auditor
