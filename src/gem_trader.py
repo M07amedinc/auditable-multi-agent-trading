@@ -134,17 +134,29 @@ def maybe_trade(state, threshold: float = 1.2, min_score: float = 0.5):
                "social_mentions_3h": mentions, "shill_score": shill,
                "onchain_h1": mom}
         if decision == "HOLD" and not momentum_buy:
+            g["traded"] = "HOLD"
+            g["last_decision"] = {"decision": "HOLD",
+                                  "reason": "micro-debate HOLD + no momentum trigger",
+                                  "mentions": mentions, "shill": shill, "onchain": mom}
+            _save()
+            print(f"[gem-trader] {g['symbol']} ({mint[:8]}...): HOLD (debate quiet, "
+                  f"mentions={mentions}, buys_h1={mom['buys'] if mom else 'n/a'})")
             continue
         if decision == "HOLD":
             decision = "BUY"     # crowd + real buyers carrying it
             why["source"] = "gem_momentum_trade"
         else:
             why["source"] = "gem_debate_trade" 
-        ok = md.check({"symbol": mint, "size_pct": TRADE_PCT, "mode": "hunter"}, state)
+        # gems are screened by the 6 gates, not the watchlist whitelist:
+        # a discovered mint passes its own gate results, so whitelist is
+        # satisfied per-mint here (watchlist trades still use the whitelist)
+        gem_state = {**state, "allowed_tokens": list(state.get("allowed_tokens", [])) + [mint]}
+        ok = md.check({"symbol": mint, "size_pct": TRADE_PCT, "mode": "hunter"}, gem_state)
         why["mandate"] = "allowed" if ok.allowed else f"blocked: {ok.reasons}"
         if not ok.allowed:
             g["traded"] = "BLOCKED"
             _save()
+            print(f"[gem-trader] {g['symbol']} ({mint[:8]}...): BLOCKED by mandate: {ok.reasons}")
             continue
         entry = g["prices"][-1][1]
         now = time.strftime("%Y-%m-%dT%H:%MZ", time.gmtime())
