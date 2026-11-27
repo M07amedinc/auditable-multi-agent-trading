@@ -98,8 +98,16 @@ def audit_open_trades():
             continue
         df = candles(sym)
         if df is None or len(df) == 0:
-            continue
-        exit_p = float(df.iloc[-1]["close"])
+            if sym.startswith("gem:"):          # gem position - price from DexScreener
+                from src.gem_trader import dex_price
+                p = dex_price(sym[4:])
+                if not p:
+                    continue
+                exit_p = float(p)
+            else:
+                continue
+        else:
+            exit_p = float(df.iloc[-1]["close"])
         entry_p = float(pos["entry"])
         if pos["side"] == "BUY":
             pnl = round((exit_p - entry_p) / entry_p * 100, 2)
@@ -248,6 +256,14 @@ def main():
             for coin in CFG["coins"]:
                 process_coin(coin)
             process_hunter()
+            # GEM TRADER: track passed gems, snapshot prices, micro-debate -> trade
+            try:
+                from src.gem_trader import track_from_hunter, snapshot_cycle, maybe_trade
+                track_from_hunter()
+                snapshot_cycle()
+                maybe_trade(STATE, threshold=DECIDE_THRESHOLD, min_score=DECIDE_MIN_SCORE)
+            except Exception:
+                traceback.print_exc()
             STATE["trades_today"] = 0
         except KeyboardInterrupt:
             print("\nstopped by user"); break
