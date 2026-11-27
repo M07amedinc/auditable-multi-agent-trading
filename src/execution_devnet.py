@@ -9,7 +9,7 @@ from solders.transaction import VersionedTransaction
 
 SOL = "So11111111111111111111111111111111111111112"
 QUOTE = "https://quote-api.devnet.jup.ag/v6/quote"
-SWAP = "https://quote-api.devnet.jup.ag/v6/swap"
+SWAP = "https://api.jup.ag/swap/v1/swap"
 
 def _keypair() -> Keypair:
     raw = os.getenv("DEVNET_PRIVATE_KEY", "").strip()
@@ -32,7 +32,9 @@ def swap_devnet(input_mint: str, output_mint: str, amount_lamports: int,
             "outputMint": output_mint, "amount": amount_lamports,
             "slippageBps": slippage_bps}, timeout=30)
         q.raise_for_status()
-        s = requests.post(SWAP, json={"quoteResponse": q.json(),
+        jkey = os.getenv("JUPITER_API_KEY", "").strip()
+        s = requests.post(SWAP, headers={"x-api-key": jkey} if jkey else {},
+            json={"quoteResponse": q.json(),
             "userPublicKey": str(kp.pubkey()), "wrapAndUnwrapSol": True}, timeout=30)
         s.raise_for_status()
         tx = VersionedTransaction.from_bytes(base64.b64decode(s.json()["swapTransaction"]))

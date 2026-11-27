@@ -131,10 +131,16 @@ def _external_gates(mint_or_symbol: str) -> tuple:
     return True, ["external_gates_pending_keys"]
 
 def gates(symbol_id, mint=None) -> tuple:
+    """Gate 4: live honeypot probe on MAINNET Jupiter API (free, no key).
+    True = sellable, False = honeypot/no-liquidity (reject),
+    None = network/unknown (PASS with warning - never call unknown a scam)."""
     reasons = []
     if mint:
-        if not honeypot_probe(mint):                 # Gate 4 (always on)
-            return False, ["gate4_honeypot"]
+        probe = honeypot_probe(mint, devnet=False)
+        if probe is False:
+            return False, ["gate4_honeypot_or_no_liquidity"]
+        if probe is None:
+            reasons.append("gate4_probe_unverified_network")
     ok, ext = _external_gates(mint or symbol_id)
     reasons += ext
     return ok, reasons
@@ -217,11 +223,21 @@ def process_hunter():
         sym = c.get("symbol") or mint[:8]
         print(f"[hunter] candidate {sym} vol24h={c['vol24h']:.0f} chg24h={c.get('chg24h', 0):.1f}%")
         ok, reasons = gates(sym, mint=mint)
-        rec = {"coin": sym, "mint": mint, "signals": c.get("signals_fired"), "gates": reasons}
+        try:
+            from src.social import social_boost
+            social = social_boost(sym)
+        except Exception:
+            social = {"mentions_3h": -1, "shill_score": None}
+        rec = {"coin": sym, "mint": mint, "signals": c.get("signals_fired"),
+               "gates": reasons, "social": social}
         with open("logs/hunter_candidates.jsonl", "a") as f:
             f.write(json.dumps(rec) + "\n")
         if not ok:
             print(f"[hunter] {sym} REJECTED by gates: {reasons}")
+        elif social.get("shill_score", 0) and social["shill_score"] > 0.5:
+            print(f"[hunter] {sym}: gates passed BUT shill_score={social['shill_score']} (coordinated bots, skip)")
+        elif social.get("mentions_3h", 0) >= 10:
+            print(f"[hunter] {sym}: gates passed + SOCIAL HOT ({social['mentions_3h']} mentions/3h) -> prime gem")
 
 def main():
     print(f"LIVE LOOP starting | paper={PAPER} | every {LOOP_MIN} min | aggressive={AGGRESSIVE} | gems={GEM_MODE}")
